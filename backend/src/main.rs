@@ -52,14 +52,13 @@ async fn main() {
     dotenv::dotenv().ok();
 
     /* db */
-    let mongodb_uri = std::env::var("URL_DB").expect("DATABASE_URL must be set.");
+    let mongodb_uri = std::env::var("URL_DB").unwrap_or("mongodb://root:example@localhost:27017".to_string());
     let database_name =
-        std::env::var("DATABASE_NAME").expect("DATABASE_NAME must be set.");
-    let collection_name = std::env::var("COLLECTION_NAME").expect("MONGO_COLLECTION must be set.");
+        std::env::var("DATABASE_NAME").unwrap_or("db".to_string());
+    let collection_name = std::env::var("COLLECTION_NAME").unwrap_or("links".to_string());
 
     /* llmdb */
-    let url_llmdb = std::env::var("URL_LLMDB").expect("URL_LLMDB must be set.");
-
+    let url_llmdb = std::env::var("URL_LLMDB").unwrap_or("http://0.0.0.0:7700".to_string());
 
     let db = Arc::new(DB::init(mongodb_uri, database_name, collection_name).await.expect("db init failed"));
     let llmdb: Arc<LLMDB> = Arc::new(LLMDB::init(url_llmdb).await.expect("llmdb init failed"));
@@ -77,10 +76,12 @@ async fn main() {
 
 
 fn app(state: AppState) -> Router {
-    let url_address = std::env::var("URL_FRONTEND").unwrap_or("http://frontend:8080".to_string());
-    let cors_layer = CorsLayer::new().allow_methods(Any).allow_origin("http://127.0.0.1:8080".parse::<HeaderValue>().unwrap())
-        .allow_origin(url_address.parse::<HeaderValue>().unwrap());
+    let url_address = std::env::var("URL_FRONTEND").unwrap_or("http://localhost:8080".to_string());
+    let cors_layer = CorsLayer::new().allow_methods(Any)
+        .allow_headers(Any)
+        .allow_origin(vec![url_address.parse().unwrap(), "http://localhost:8080".parse().unwrap(), "http://127.0.0.1:8080".parse().unwrap()]);
 
+    
     Router::new()
         .route("/", get(|| async {"Home"}))
         .route("/link", post(add_link).put(edit_link).delete(delete_link))
@@ -101,7 +102,7 @@ async fn handle_websocket(tx: Sender<String>, websocket: WebSocket) {
     tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             println!("<- {:?}", msg);
-            sender.send(Message::from(msg)).await.unwrap()
+         //   sender.send(Message::from(msg)).await.unwrap()
         }
     });
 

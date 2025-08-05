@@ -8,6 +8,19 @@ fn main() {
     launch(App);
 }
 
+#[derive(Serialize)]
+pub struct SearchQuery {
+    query: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct LinkPayload {
+    pub url: String,
+    pub tags: Vec<String>,
+    pub description: Option<String>,
+}
+
+
 #[derive(PartialEq, Clone)]
 pub enum Page {
     Links,
@@ -49,11 +62,7 @@ pub fn App() -> Element {
 
 
 
-#[derive(Serialize)]
-struct LinkPayload {
-    url: String,
-    description: Option<String>,
-}
+
 
 #[component]
 fn Links() -> Element{
@@ -79,10 +88,11 @@ fn Links() -> Element{
                 } else {
                     Some(desc.clone())
                 },
+                tags: vec!["tag1".to_string(), "tag2".to_string()],
             };
 
             let url_backend = std::env::var("URL_BACKEND").unwrap_or("localhost:3000".to_string());
-            let http_url_endpoint_backend = format!("http://{}//link",url_backend);
+            let http_url_endpoint_backend = format!("http://{}/link",url_backend);
 
             let response = Request::post(http_url_endpoint_backend.as_str())
                 .header("Content-Type", "application/json")
@@ -99,7 +109,7 @@ fn Links() -> Element{
                     feedback.set(Some(format!("❌ Error: {}", res.status())));
                 }
                 Err(err) => {
-                    feedback.set(Some(format!("❌ Error de red: {}", err)));
+                    feedback.set(Some(format!("❌ Error de red: {} {}", http_url_endpoint_backend, err)));
                 }
             }
         });
@@ -138,10 +148,6 @@ fn Links() -> Element{
     }
 }
 
-#[derive(Serialize)]
-pub struct SearchQuery {
-    query: String,
-}
 
 
 #[component]
@@ -149,33 +155,33 @@ fn Search() -> Element {
 
     let mut query = use_signal(|| "".to_string());
     let mut feedback = use_signal(|| None::<String>);
+    let mut links = use_signal(|| Vec::<LinkPayload>::new());
 
     let url_backend = std::env::var("URL_BACKEND").unwrap_or("localhost:3000".to_string());
-    let http_url_endpoint_backend = format!("http://{}//search",url_backend);
 
     let submit = move |_| {
         let query = query().clone();
-        let http_url_endpoint_backend = http_url_endpoint_backend.clone();
+        let url_backend = url_backend.clone();
 
         spawn(async move {
-           let payload = SearchQuery{ query };
+            let encoded_query = urlencoding::encode(&query);
+            let http_url_endpoint_backend = format!("http://{}/search?query={}",url_backend, encoded_query);
 
             let response = Request::get(http_url_endpoint_backend.as_str())
-                .header("Content-Type", "application/json")
-                .json(&payload)
-                .unwrap()
                 .send()
                 .await;
 
             match response {
                 Ok(res) if res.status() == 200 => {
+                    let new_links: Vec<LinkPayload> = res.json().await.unwrap_or_default();
                     feedback.set(Some("✅ Enviado correctamente".to_string()));
+                    links.set(new_links);
                 }
                 Ok(res) => {
                     feedback.set(Some(format!("❌ Error: {}", res.status())));
                 }
                 Err(err) => {
-                    feedback.set(Some(format!("❌ Error de red: {}", err)));
+                    feedback.set(Some(format!("❌ Error de red: {} {}", http_url_endpoint_backend, err)));
                 }
             }
         });
@@ -203,6 +209,30 @@ fn Search() -> Element {
 
             if let Some(msg) = feedback() {
                 p { "{msg}" }
+            }
+
+                    div {
+            class: "link-list",
+            for link in links.read().clone().iter() {
+                    div {
+                        class: "link-card",
+                        a {
+                            href: "{link.url}",
+                            target: "_blank",
+                            class: "link-title",
+                            "{link.url}"
+                        }
+                        if let Some(desc) = &link.description {
+                            p { class: "link-desc", "{desc}" }
+                        }
+                        div {
+                            class: "tag-list",
+                            for tag in link.tags.iter() {
+                                span { class: "tag", "#{tag}" }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
