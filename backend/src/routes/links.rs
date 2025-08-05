@@ -7,6 +7,8 @@ use serde::Deserialize;
 use crate::{AppState};
 use crate::model::Link;
 use crate::services::llmdb::LLMDBLink;
+use crate::services::queue;
+use crate::services::queue::Task;
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -22,12 +24,21 @@ pub async fn add_link(
         eprintln!("{:?}",e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let llmd_link = LLMDBLink{link, id: new_id.clone()};
+    let llmd_link = LLMDBLink{link: link.clone(), id: new_id.clone()};
     state.llmdb.insert_link(&llmd_link).await.map_err(|e| {
         eprintln!("{:?}",e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(Json(new_id))
+    
+    
+    if let Some(queue) = state.queue {
+        if let Err(e) = queue::push_task(queue::Task{id: new_id.clone(), payload: "".to_string()}, queue).await {
+            eprintln!("{:?}",e);
+        }
+    } else {
+        println!("Add redis service to run messages");
+    }
+    Ok(Json(new_id.clone()))
 }
 
 pub async fn edit_link(

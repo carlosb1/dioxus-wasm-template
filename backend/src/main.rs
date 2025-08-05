@@ -20,6 +20,7 @@ fn assert_send_sync<T: Send + Sync>() {}
 pub struct AppState {
     pub db: Arc<DB>,
     pub llmdb: Arc<LLMDB>,
+    pub queue: Option<Arc<redis::Client>>,
     pub tx: Sender<String>,
 }
 
@@ -40,7 +41,10 @@ impl AppState {
 
         //websocket communication
         let (tx, _) = broadcast::channel(100);
-        let state = AppState{db, llmdb, tx};
+        
+        // redis connection
+        
+        let state = AppState{db, llmdb, tx, queue: None};
         state
     }
 }
@@ -59,13 +63,17 @@ async fn main() {
 
     /* llmdb */
     let url_llmdb = std::env::var("URL_LLMDB").unwrap_or("http://0.0.0.0:7700".to_string());
-
+    
+    /* queue redis */
+    let url_queue = std::env::var("URL_QUEUE").unwrap_or("redis://0.0.0.0:6379/0".to_string());
+    let redis_client = Arc::new(redis::Client::open(url_queue).expect("redis connect failed"));
+    
     let db = Arc::new(DB::init(mongodb_uri, database_name, collection_name).await.expect("db init failed"));
     let llmdb: Arc<LLMDB> = Arc::new(LLMDB::init(url_llmdb).await.expect("llmdb init failed"));
 
     //websocket communication
     let (tx, _) = broadcast::channel(100);
-    let state = AppState{db, llmdb, tx};
+    let state = AppState{db, llmdb, tx, queue: Some(redis_client)};
 
 
     let app = app(state);
@@ -81,7 +89,7 @@ fn app(state: AppState) -> Router {
         .allow_headers(Any)
         .allow_origin(vec![url_address.parse().unwrap(), "http://localhost:8080".parse().unwrap(), "http://127.0.0.1:8080".parse().unwrap()]);
 
-    
+
     Router::new()
         .route("/", get(|| async {"Home"}))
         .route("/link", post(add_link).put(edit_link).delete(delete_link))
