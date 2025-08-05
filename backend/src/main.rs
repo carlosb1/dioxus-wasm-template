@@ -1,0 +1,251 @@
+
+mod model;
+mod services;
+mod routes;
+
+use std::sync::Arc;
+use axum::{extract::{ws::{Message, WebSocket}, State, WebSocketUpgrade}, http::HeaderValue, response::IntoResponse, routing::get, Router};
+use axum::routing::post;
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::broadcast::{self, Sender};
+use tower_http::cors::{Any, CorsLayer};
+use services::llmdb::LLMDB;
+use services::db::DB;
+use crate::routes::links::{add_link, delete_link, edit_link, search_links};
+
+// assert checkers
+fn assert_send_sync<T: Send + Sync>() {}
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: Arc<DB>,
+    pub llmdb: Arc<LLMDB>,
+    pub tx: Sender<String>,
+}
+
+impl AppState {
+    pub(crate) async fn test() -> Self {
+        assert_send_sync::<LLMDB>();
+        assert_send_sync::<DB>();
+
+
+        let mongodb_uri = "mongodb://root:example@localhost:27017";
+        let database_name = "db";
+        let collection_name = "links";
+        let url_llmdb = "http://0.0.0.0:7700";
+
+        let db = Arc::new(
+            DB::init(mongodb_uri.to_string(), database_name.to_string(), collection_name.to_string()).await.expect("db init failed"));
+        let llmdb: Arc<LLMDB> = Arc::new(LLMDB::init(url_llmdb.to_string()).await.expect("llmdb init failed"));
+
+        //websocket communication
+        let (tx, _) = broadcast::channel(100);
+        let state = AppState{db, llmdb, tx};
+        state
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    assert_send_sync::<LLMDB>();
+    assert_send_sync::<DB>();
+    dotenv::dotenv().ok();
+
+    /* db */
+    let mongodb_uri = std::env::var("URL_DB").expect("DATABASE_URL must be set.");
+    let database_name =
+        std::env::var("DATABASE_NAME").expect("DATABASE_NAME must be set.");
+    let collection_name = std::env::var("COLLECTION_NAME").expect("MONGO_COLLECTION must be set.");
+
+    /* llmdb */
+    let url_llmdb = std::env::var("URL_LLMDB").expect("URL_LLMDB must be set.");
+
+
+    let db = Arc::new(DB::init(mongodb_uri, database_name, collection_name).await.expect("db init failed"));
+    let llmdb: Arc<LLMDB> = Arc::new(LLMDB::init(url_llmdb).await.expect("llmdb init failed"));
+
+    //websocket communication
+    let (tx, _) = broadcast::channel(100);
+    let state = AppState{db, llmdb, tx};
+
+
+    let app = app(state);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+
+    axum::serve(listener, app).await.unwrap();
+}
+
+
+fn app(state: AppState) -> Router {
+    let url_address = std::env::var("URL_FRONTEND").unwrap_or("http://frontend:8080".to_string());
+    let cors_layer = CorsLayer::new().allow_methods(Any).allow_origin("http://127.0.0.1:8080".parse::<HeaderValue>().unwrap())
+        .allow_origin(url_address.parse::<HeaderValue>().unwrap());
+
+    Router::new()
+        .route("/", get(|| async {"Home"}))
+        .route("/link", post(add_link).put(edit_link).delete(delete_link))
+        .route("/search", get(search_links))
+        .route("/ws", get(chat_handler))
+        .with_state(state)
+        .layer(cors_layer)
+}
+
+async fn chat_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(|websocket| handle_websocket(state.tx, websocket))
+}
+
+async fn handle_websocket(tx: Sender<String>, websocket: WebSocket) {
+    let (mut sender,mut receiver) = websocket.split();
+
+    let mut rx = tx.subscribe();
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            println!("<- {:?}", msg);
+            sender.send(Message::from(msg)).await.unwrap()
+        }
+    });
+
+    while let Some(msg) = receiver.next().await  {
+        if let Ok(msg)  = msg {
+            match msg {
+                Message::Text(content) => {
+                    println!("->{}", content);
+                    tx.send(content.to_string()).unwrap();
+                },
+                _ => ()
+            }
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        Router,
+    };
+    use axum::body::to_bytes;
+    use hyper::body;
+    use serde_json::json;
+    use tower::ServiceExt; // for `app.oneshot()`
+    use http_body_util::BodyExt;
+
+
+    use crate::{app, model::Link, routes::links::{add_link, edit_link, delete_link, search_links}, AppState};
+
+
+    #[tokio::test]
+    async fn test_add_link() {
+        let state = AppState::test().await;
+        let app = app(state);
+
+        let link = Link {
+            url: "https://example.com".to_string(),
+            tags: vec!["tag1".to_string()],
+            description: None
+        };
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/link")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(serde_json::to_string(&link).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body();
+        let collected = body.collect().await.unwrap();
+        let bytes = collected.to_bytes();
+        let new_id: String = serde_json::from_slice(&*bytes).unwrap();
+        assert!(!new_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_links() {
+        let state = AppState::test().await;
+        let app = app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/search?query=example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body();
+        let collected = body.collect().await.unwrap();
+        let bytes = collected.to_bytes();
+        let links: Vec<Link>= serde_json::from_slice(&*bytes).unwrap();
+        assert_eq!(links.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_link() {
+        let state = AppState::test().await;
+        let app = app(state);
+
+        let id = "fake_id_123";
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/link")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!(id).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            response.status() == StatusCode::NO_CONTENT
+                || response.status() == StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edit_link() {
+        let state = AppState::test().await;
+        let app = app(state);
+
+        let llmdb_link = json!({
+        "id": "fake_id_123",
+        "link": {
+            "url": "https://example.com",
+            "tags": ["tag1"],
+            "description": "Updated desc"
+        }
+    });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/link")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(llmdb_link.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            response.status() == StatusCode::OK
+                || response.status() == StatusCode::NOT_FOUND
+        );
+    }
+
+}

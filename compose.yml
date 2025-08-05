@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+    command: ["cargo", "run"]
+    env_file:
+      - ./default.env
+      - ./override.env
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./frontend:/app
+    command: ["dx", "serve", "--addr", "0.0.0.0", "--port", "8080"]
+    env_file:
+      - ./default.env
+      - ./override.env
+
+  mongo:
+    image: mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.16
+    ports:
+      - "7700:7700"
+    volumes:
+      - ./meili_data:/meili_data
+    command: meilisearch --master-key="MASTER_KEY"
+    restart: unless-stopped
+
