@@ -4,7 +4,7 @@ import subprocess
 import json
 import os
 
-url = os.environ.get("URL_REDIS", "redis://localhost:6379/0")
+url = os.environ.get("URL_QUEUE", "redis://localhost:6379/0")
 r = redis.from_url(url)
 
 print("Waiting tasks...")

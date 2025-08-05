@@ -91,7 +91,7 @@ fn Links() -> Element{
                 tags: vec!["tag1".to_string(), "tag2".to_string()],
             };
 
-            let url_backend = std::env::var("URL_BACKEND").unwrap_or("localhost:3000".to_string());
+            let url_backend ="localhost:3000";
             let http_url_endpoint_backend = format!("http://{}/link",url_backend);
 
             let response = Request::post(http_url_endpoint_backend.as_str())
@@ -157,7 +157,7 @@ fn Search() -> Element {
     let mut feedback = use_signal(|| None::<String>);
     let mut links = use_signal(|| Vec::<LinkPayload>::new());
 
-    let url_backend = std::env::var("URL_BACKEND").unwrap_or("localhost:3000".to_string());
+    let url_backend ="localhost:3000";
 
     let submit = move |_| {
         let query = query().clone();
@@ -248,7 +248,8 @@ struct LinkCardProps {
 
 #[component]
 fn Interactive() -> Element {
-    let url_backend: String = std::env::var("URL_BACKEND").unwrap_or("localhost:3000".to_string());
+    let url_backend ="localhost:3000";
+
     let mut receiver_ws = use_signal(|| None);
     /* we send message via websocket */
     let ws_client = use_coroutine(move | rx:UnboundedReceiver<String>| {
