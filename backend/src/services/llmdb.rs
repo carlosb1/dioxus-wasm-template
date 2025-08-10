@@ -1,10 +1,11 @@
 use meilisearch_sdk::client::Client;
 use mongodb::bson::doc;
-use mongodb::bson::oid::ObjectId;
 use serde::{Deserialize, Serialize};
 use crate::model::Link;
+use uuid::Uuid;
 
 pub const MASTER_KEY: &str = "MASTER_KEY";
+const MODEL: &'static str = "links";
 
 pub struct LLMDB {
     client: Client,
@@ -16,7 +17,15 @@ pub struct LLMDBLink {
     pub id: String,
 }
 
-const MODEL: &'static str = "links";
+impl LLMDBLink {
+    pub fn new(link: Link) -> LLMDBLink {
+        let id = Uuid::new_v4();
+        let id_str = id.to_string();
+        LLMDBLink{link, id: id_str}
+    }
+}
+
+
 
 impl LLMDB {
     pub async fn init(url_llmdb: String) -> anyhow::Result<Self> {

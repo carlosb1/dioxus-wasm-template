@@ -18,6 +18,7 @@ tower = "0.5.2"
 hyper = "1.6.0"
 dotenv = "0.15.0"
 redis = { version = "0.32.4", features = ["aio", "tokio-comp"] }
+uuid = { version = "1.17.0", features = ["v4"] }
 [dev-dependencies]
 http-body-util = "0.1.3"
 

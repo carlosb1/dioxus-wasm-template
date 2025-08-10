@@ -29,6 +29,7 @@ services:
     build:
       context: ./py-agents
       dockerfile: Dockerfile
+    shm_size: "1gb"
     env_file:
       - ./default.env
       - ./override.env
